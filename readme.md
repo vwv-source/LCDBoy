@@ -8,6 +8,6 @@ Currently it can run:
 - Super Mario Bros (broken scrolling)
 
 <br>
-Still in WIP (or abandoned)
-<br><br>
+Still a WIP (or abandoned)
+<br>
 PS. I don't know if this compiles on Windows, but it theoretically should with some small effort
