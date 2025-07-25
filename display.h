@@ -1,0 +1,2 @@
+void DisplayInit();
+void DisplayCycle();
