@@ -1,6 +1,6 @@
 CC=gcc
 CFLAGS=-g -Os
-LIBS=-lSDL2
+LIBS=-lSDL3
 O=build
 
 OBJS=	\

@@ -3,11 +3,12 @@
 
 #include <stdlib.h>
 #include <stdint.h>
+#include <stdio.h>
 
 //todo
 //switch from SDL2 to SDL3 as the compat layer (SDL2->SDL3)
 //is extremely slow and the SDL2 packages don't exist anymore
-#include <SDL2/SDL.h>
+#include <SDL3/SDL.h>
 
 extern uint8_t memory[0x10000];
 extern int c;
@@ -18,24 +19,31 @@ extern uint16_t pc;
 SDL_Window* window;
 SDL_Renderer* renderer;
 SDL_Surface* windowSurface;
+SDL_Texture* finalizedFrame;
 
 void DisplayInit(){
     SDL_Init(SDL_INIT_VIDEO);
 
-    window = SDL_CreateWindow("LCDBoy", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, 160*3, 144*3, SDL_WINDOW_SHOWN);
-    renderer = SDL_CreateRenderer(window, -1, 0);
+    window = SDL_CreateWindow("LCDBoy", 160*3, 144*3, 0);
+    renderer = SDL_CreateRenderer(window, NULL);
+	finalizedFrame = SDL_CreateTexture(renderer, SDL_GetPixelFormatForMasks(32,0,0,0,0), SDL_TEXTUREACCESS_STREAMING, 160,144);
+	windowSurface = SDL_CreateSurface(160,144,SDL_GetPixelFormatForMasks(32,0,0,0,0));
+
 }
 
 void DrawTile(int x, int y, uint8_t id, int sprite){
+    unsigned char* pixels = (unsigned char*)windowSurface->pixels;
+	int index8000 = 0x8000 + 16*id;
+	int index9000 = 0x9000 + 16*id;
     for(int j = 0; j < 8; j++){
         uint8_t byte1, byte2 = 0;
         //checking bg tile map display select
         if(((memory[0xFF40] >> 0x4u) & 0x1) == 1 || sprite){
-			byte1 = memory[0x8000 + 16*id + j*2];
-			byte2 = memory[0x8000 + 16*id + j*2 + 1];
+			byte1 = memory[index8000 + j*2];
+			byte2 = memory[index8000 + j*2 + 1];
         }else{
-			byte1 = memory[0x9000 + 16*id + j*2];
-			byte2 = memory[0x9000 + 16*id + j*2 + 1];
+			byte1 = memory[index9000 + j*2];
+			byte2 = memory[index9000 + j*2 + 1];
 			//since this uses unsigned numbers
 			if(id > 127){
 				byte1 = memory[0x8800 + 16*(id-128) + j*2];
@@ -45,8 +53,6 @@ void DrawTile(int x, int y, uint8_t id, int sprite){
 
         for(int p = 0; p < 8; p++){
             uint8_t color =  ((byte2 >> 7-p) & 0x1u) << 1u | ((byte1 >> 7-p) & 0x1u);
-
-            unsigned char* pixels = (unsigned char*)windowSurface->pixels;
             
             //bounds check since something seems to be horribly wrong with these sums
             if(y+j >= windowSurface->h || x+p >= windowSurface->w || x+p < 0 || y+j < 0)
@@ -74,9 +80,10 @@ void DrawTile(int x, int y, uint8_t id, int sprite){
 
 void RenderTiles(){
 	for(int x = 0; x < 32; x++){
+		int index = 0x9800u + x * 32;
 		for(int i = 0; i < 32; i++){
 			//why did I not consider if it was starting at $9C00??
-			DrawTile(i*8, x*8, memory[0x9800u + x * 32 + i], 0);
+			DrawTile(i*8, x*8, memory[index + i], 0);
 		}
 	}
 }
@@ -96,12 +103,15 @@ void RenderSprites(){
 void DisplayCycle(){
 	if(memory[0xFF44] == 153u){
 		memory[0xFF44] = 0;
-		windowSurface = SDL_CreateRGBSurface(0,160,144,32,0,0,0,0);
+
 		RenderTiles();
 		RenderSprites();
-		SDL_Rect screenbox = {0,0, 160*3, 144*3};
-		SDL_Texture* finalizedFrame = SDL_CreateTextureFromSurface(renderer, windowSurface);
-		SDL_RenderCopy(renderer, finalizedFrame, NULL, &screenbox);
+		SDL_FRect screenbox = {0,0, 160*3, 144*3};
+
+		SDL_UpdateTexture(finalizedFrame, NULL, windowSurface->pixels, windowSurface->pitch);
+		SDL_SetTextureScaleMode(finalizedFrame, SDL_SCALEMODE_NEAREST);
+
+		SDL_RenderTexture(renderer, finalizedFrame, NULL, &screenbox);
 		SDL_RenderPresent(renderer);
 
 	}else{

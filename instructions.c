@@ -21,7 +21,7 @@ enum gbFlags{
 
 extern uint16_t pc;
 extern uint16_t sp;
-extern uint8_t memory[0x10000];
+extern uint8_t memory[];
 extern uint16_t opcode;
 
 extern uint8_t P14buffer;
@@ -389,9 +389,22 @@ int breakreached = 0;
 
 int pcycles, dcycles, tcycles = 0;
 
+//alternative to using the boot rom
+//just manually initializing the registers instead
+void GB_InitializeRegisters(){
+	regs.a = 0x01;
+	regs.f = 0xB0;
+	regs.c = 0x13;
+	regs.e = 0xd8;
+	regs.h = 0x01;
+	regs.l = 0x4d;
+}
+
 void GB_Loop(){
     regs.f &= 0xF0;
 
+	//this is some jank I made to get any display output
+	//needs to be replaced
     if(c >= 456*pcycles){
     	if(breakreached)
 	        memory[0xFF44] = 0x90;
@@ -423,20 +436,6 @@ void GB_Loop(){
 
     //    }
     //}
-
-
-    //alternative to using the boot rom
-	//just manually initializing the registers instead
-    if(!onlyonce){
-	    onlyonce = 1;
-	    regs.a = 0x01;
-	    regs.f = 0xB0;
-	    regs.c = 0x13;
-	    regs.e = 0xd8;
-	    regs.h = 0x01;
-	    regs.l = 0x4d;
-	    sp = 0xFFFE;
-    }
 
     opcode = (memory[pc] << 8u) | memory[pc+1];
     opcode3 = (memory[pc] << 16u) | memory[pc+1] << 8u | memory[pc+2];
