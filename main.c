@@ -8,11 +8,11 @@
 #include "display.h"
 
 uint16_t pc = 0x0100u; //program counter
-uint16_t sp = 0xFFFEu; //stack counter
-uint8_t memory[0x10000];
+uint16_t sp = 0xFFFEu; //stack pointer
+uint8_t * memory = NULL;
 uint16_t opcode;
 
-SDL_Event sdl_e;
+int pauseAutomatic = 0;
 
 char* filename;
 void GB_ReadRangeIntoMemory(uint8_t bank_number) {
@@ -63,13 +63,14 @@ int main(int argc, char* argv[]){
     }
     filename = argv[1];
 
+    memory = malloc(sizeof(char)*0x10000);
+
     readROM(filename);
     DisplayInit();
 
-    memory[0xFF00u] = 0x0Fu;
-
 	uint64_t lastPoll = SDL_GetTicks();
     uint64_t pollInterval = 50;
+    SDL_Event sdl_e;
     while(1){
 		//I'm doing this crap because SDL_PollEvent is EXTREMELY slow for
 		//some odd reason, maybe a bug with SDL3?
@@ -95,7 +96,8 @@ int main(int argc, char* argv[]){
 				}
 			}
 		}
-	    GB_Loop();
+        if(!pauseAutomatic)
+	        GB_runInstruction();
     }
     return 0;
 }

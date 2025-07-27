@@ -7,8 +7,8 @@
 extern uint16_t pc;
 extern uint16_t sp;
 extern long c;
-extern struct gbRegisters regs;
-extern uint8_t memory[0x10000];
+extern gbRegisters regs;
+extern uint8_t * memory;
 
 void GB_MemoryWrite();
 

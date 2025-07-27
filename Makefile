@@ -8,8 +8,9 @@ OBJS=	\
 		$(O)/display.o \
 		$(O)/instructions.o \
 		$(O)/insts_cb.o \
+		$(O)/interrupts.o \
 
-all:	$(O) $(O)/emain
+all:	$(O) $(O)/lcdboy
 
 clean:
 	rm ./build/*.o
@@ -17,8 +18,8 @@ clean:
 $(O):
 	mkdir -p $(O)
 
-$(O)/emain: $(OBJS)
-	$(CC) $(CFLAGS) $(LDFLAGS) $(OBJS) -o $(O)/emain $(LIBS)
+$(O)/lcdboy: $(OBJS)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(OBJS) -o $(O)/lcdboy $(LIBS)
 
 $(O)/%.o: %.c | $(O)
 	$(CC) $(CFLAGS) -c $< -o $@

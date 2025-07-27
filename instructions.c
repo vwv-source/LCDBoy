@@ -4,31 +4,19 @@
 
 #include "display.h"
 #include "insts_cb.h"
-
-typedef struct {
-    uint8_t a; uint8_t f;
-    uint8_t b; uint8_t c;
-    uint8_t d; uint8_t e;
-    uint8_t h; uint8_t l;
-} gbRegisters;
-
-enum gbFlags{
-    CARRY = 4,
-    HALFCARRY,
-    BORROW,
-    ZERO
-};
+#include "instructions.h"
+#include "interrupts.h"
 
 extern uint16_t pc;
 extern uint16_t sp;
-extern uint8_t memory[];
+extern uint8_t * memory;
 extern uint16_t opcode;
 
 extern uint8_t P14buffer;
 extern uint8_t P15buffer;
 
 uint32_t opcode3;
-long c = 0;
+int c = 0;
 int ime = 0;
 gbRegisters regs;
 
@@ -72,16 +60,16 @@ void GB_MemoryWrite(uint16_t address, uint8_t value){
 	if(memory[0x147] == 0x1u){
 		switch(address){
 
-		//memory model selection
-		case 0x6000u ... 0x8000u:
-			MBC1_MemoryModel = value & 0x1;
-			return;
+            //memory model selection
+            case 0x6000u ... 0x8000u:
+                MBC1_MemoryModel = value & 0x1;
+                return;
 
-		//4000-7FFF bank selection
-		case 0x2000u ... 0x4000u:
-			GB_ReadRangeIntoMemory(value & 0x1Fu);
-			//printf("[MBC1 BANK SELECT] Address: 0x%x, Value: 0x%x, Bank: 0x%x, ROMS: 0x%x, ROME: 0x%x\n", address, value, value & 0x1Fu, 0x4000u * (value & 0x1Fu), 0x4000u * (value & 0x1Fu) + 0x4000u - 0x1u);
-			return;
+            //4000-7FFF bank selection
+            case 0x2000u ... 0x4000u:
+                GB_ReadRangeIntoMemory(value & 0x1Fu);
+                //printf("[MBC1 BANK SELECT] Address: 0x%x, Value: 0x%x, Bank: 0x%x, ROMS: 0x%x, ROME: 0x%x\n", address, value, value & 0x1Fu, 0x4000u * (value & 0x1Fu), 0x4000u * (value & 0x1Fu) + 0x4000u - 0x1u);
+                return;
 
 		}
 	}
@@ -384,10 +372,8 @@ void Generic_RET(){
     c+=8;
 }
 
-int onlyonce = 0;
-int breakreached = 0;
-
-int pcycles, dcycles, tcycles = 0;
+int breakreached = 0; //?
+int pcycles, dcycles, tcycles;
 
 //alternative to using the boot rom
 //just manually initializing the registers instead
@@ -400,42 +386,57 @@ void GB_InitializeRegisters(){
 	regs.l = 0x4d;
 }
 
-void GB_Loop(){
-    regs.f &= 0xF0;
+int halted = 0;
+extern int pauseAutomatic;
+void runCPUTicks(int tcycles){
+    int cyclesRan;
+    pauseAutomatic = 1;
+    while(tcycles > cyclesRan){
+        cyclesRan += GB_runInstruction();
+    }
+    printf("%i\n", cyclesRan);
+    pauseAutomatic = 0;
+}
 
-	//this is some jank I made to get any display output
-	//needs to be replaced
-    if(c >= 456*pcycles){
-    	if(breakreached)
-	        memory[0xFF44] = 0x90;
-        else
-			DisplayCycle();
-			
+int timer_temp = 1;
+int GB_runInstruction(){
+    regs.f &= 0xF0; //latter nibble is always empty
+
+    //IIRC it takes 456 cycles to draw a frame
+    if(c >= 256*pcycles){
+        DisplayCycle();
         pcycles++;
     }
+	
+    handleInterrupts();
 
+    //this register needs to be updated a bunch
     if(c >= 256*dcycles){
-        memory[0xFF04] += 1;
+        memory[DIV] += 1;
         dcycles++;
     }
-    
-    //cursed timer interrupt
-    if(ime && (memory[0xFF0Fu] >> 2u) & 0x1u){
-	    ime = 0;
-        memory[0xFF0Fu] = 0x0;
-	    sp--;
-	    memory[sp] = (pc & 0xFF00u) >> 8u;
-	    sp--;
-	    memory[sp] = (pc & 0x00FFu);
-	    pc = 0x0030u;
+
+    if(memory[LYC] == memory[LCDC_Y]){
+        if((memory[STAT] & 0x40u)){
+            if(ime)
+                memory[IF] |= 0x2u;
+
+            memory[STAT] |= 0x4u;
+        }
     }
 
-    //??? what the fuck was I making
-    //if(((memory[0xFF07] >> 2u) & 0x1) == 1){
-    //    switch(memory[0xFF07] & 0x3u){
+    if(c >= 64*4*timer_temp){
+        if((memory[TAC] >> 2u) & 0x1){
+            memory[TIMA]++;
+            if(!memory[TIMA])
+                memory[IF] |= 0x4u;
+        }
+        timer_temp++;    
+    }
 
-    //    }
-    //}
+    if(halted){
+        c+=4*4;
+    }
 
     opcode = (memory[pc] << 8u) | memory[pc+1];
     opcode3 = (memory[pc] << 16u) | memory[pc+1] << 8u | memory[pc+2];
@@ -448,7 +449,6 @@ void GB_Loop(){
     uint8_t n = (opcode & 0x00FFu);
     uint16_t nn = (opcode3 & 0x00FFFFu);
     uint16_t LSnn = ((opcode3 & 0x0000FFu) << 8u) | ((opcode3 & 0x00FF00u) >> 8u);
-    uint16_t calc_temp = 0;
 
     if(breakreached == 1){
 		//printf("INST: 0x%x\nPC: 0x%x SP: 0x%x\n", (opcode & 0xFF00u) >> 8u, pc, sp);
@@ -1237,7 +1237,7 @@ void GB_Loop(){
 
 	    //HALT
 	    case 0x76:
-	        pc+=1;
+            halted=1; pc+=1;
 	        break;
 
 		//SCF
@@ -1285,4 +1285,6 @@ void GB_Loop(){
 	        getchar();
             exit(0);
     }
+
+    return c;
 }
