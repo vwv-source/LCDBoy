@@ -55,6 +55,8 @@ void GB_HandleInput(int keyenum){
   }
 }
 
+void GB_InitializeRegisters();
+
 int main(int argc, char* argv[]){
 
     if(argc < 2){
@@ -63,10 +65,11 @@ int main(int argc, char* argv[]){
     }
     filename = argv[1];
 
-    memory = malloc(sizeof(char)*0x10000);
+    memory = calloc(0x10000, sizeof(char));
 
     readROM(filename);
     DisplayInit();
+    GB_InitializeRegisters();
 
 	uint64_t lastPoll = SDL_GetTicks();
     uint64_t pollInterval = 50;
@@ -82,7 +85,6 @@ int main(int argc, char* argv[]){
 					case SDL_EVENT_QUIT:
 						exit(0);
 					
-					//Is it fine to ignore the out ports? (p14 & p15)
 					case SDL_EVENT_KEY_DOWN:
 						GB_HandleInput(sdl_e.key.key);
 						break;
@@ -96,8 +98,7 @@ int main(int argc, char* argv[]){
 				}
 			}
 		}
-        if(!pauseAutomatic)
-	        GB_runInstruction();
+        GB_mainLoop();
     }
     return 0;
 }

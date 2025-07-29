@@ -54,26 +54,64 @@ void GB_CheckHalfBorrow(uint8_t int1, uint8_t int2){
 //0 is 16/8 (default)
 //1 is 4/32
 int MBC1_MemoryModel = 0;
+uint8_t currentRAMBank = 0;
+
+uint8_t memoryBanks[100][0x2000];
+
 void GB_MemoryWrite(uint16_t address, uint8_t value){
-
 	//most basic mbc1 config
-	if(memory[0x147] == 0x1u){
-		switch(address){
+	switch(memory[CARTRIDGE_TYPE]){
+        case 0x1:
+            switch(address){
+                //memory model selection
+                case 0x6000u ... 0x7FFFu:
+                    MBC1_MemoryModel = value & 0x1;
+                    return;
 
-            //memory model selection
-            case 0x6000u ... 0x8000u:
-                MBC1_MemoryModel = value & 0x1;
-                return;
+                //4000-7FFF bank selection
+                case 0x2000u ... 0x3FFFu:
+                    GB_ReadRangeIntoMemory(value & 0x1Fu);
+                    //printf("[MBC1 BANK SELECT] Address: 0x%x, Value: 0x%x, Bank: 0x%x, ROMS: 0x%x, ROME: 0x%x\n", address, value, value & 0x1Fu, 0x4000u * (value & 0x1Fu), 0x4000u * (value & 0x1Fu) + 0x4000u - 0x1u);
+                    return;
 
-            //4000-7FFF bank selection
-            case 0x2000u ... 0x4000u:
-                GB_ReadRangeIntoMemory(value & 0x1Fu);
-                //printf("[MBC1 BANK SELECT] Address: 0x%x, Value: 0x%x, Bank: 0x%x, ROMS: 0x%x, ROME: 0x%x\n", address, value, value & 0x1Fu, 0x4000u * (value & 0x1Fu), 0x4000u * (value & 0x1Fu) + 0x4000u - 0x1u);
-                return;
-
-		}
+            }
+            break;
+        case 0x3:
+            switch(address){
+                case 0x2000u ... 0x3FFFu:
+                    GB_ReadRangeIntoMemory(value & 0x1Fu);
+                    //printf("[MBC1 BANK SELECT] Address: 0x%x, Value: 0x%x, Bank: 0x%x, ROMS: 0x%x, ROME: 0x%x\n", address, value, value & 0x1Fu, 0x4000u * (value & 0x1Fu), 0x4000u * (value & 0x1Fu) + 0x4000u - 0x1u);
+                    return;
+                    
+                case 0x4000u ... 0x5FFFu:
+                    for(int i=0; i < 0x2000u; i++){
+                        memoryBanks[currentRAMBank][i] = memory[0xA000+i];
+                    }
+                    currentRAMBank = value & 0x03;
+                    for(int i=0; i < 0x2000u; i++){
+                        memory[0xA000+i] = memoryBanks[value][i];
+                    }
+                    return;
+            }
+            break;
+        case 0x13:
+            switch(address){
+                case 0x2000u ... 0x3FFFu:
+                    GB_ReadRangeIntoMemory(value & 0x7Fu);
+                    return;
+                
+                case 0x4000u ... 0x5FFFu:
+                    for(int i=0; i < 0x2000u; i++){
+                        memoryBanks[currentRAMBank][i] = memory[0xA000+i];
+                    }
+                    currentRAMBank = value & 0x03;
+                    for(int i=0; i < 0x2000u; i++){
+                        memory[0xA000+i] = memoryBanks[value][i];
+                    }
+                    return;
+            }
+            break;
 	}
-
 
 	if(address == 0xFF46u){
 		uint16_t bigvalue = value << 8u;
@@ -92,10 +130,8 @@ void GB_MemoryWrite(uint16_t address, uint8_t value){
 	}
 
 	//Add the rest of the restricted areas dumbass
-	if(address > 0x8000u && address != 0xFF00u){
+	if(address > 0x8000u && address != 0xFF00u)
 		memory[address] = value;
-	}
-
 }
 
 //LD NN N
@@ -117,11 +153,10 @@ void LD_r1(uint8_t* reg1, uint8_t* reg2){
 void LDHL_r1(uint8_t* reg, int side){
     uint16_t HL = (regs.h << 8u) | regs.l;
     
-    if(side){
+    if(side)
         *reg = memory[HL];
-    }else{
+    else
         GB_MemoryWrite(HL, *reg);
-    }
     
     c+=8;
     pc+=1;
@@ -372,9 +407,6 @@ void Generic_RET(){
     c+=8;
 }
 
-int breakreached = 0; //?
-int pcycles, dcycles, tcycles;
-
 //alternative to using the boot rom
 //just manually initializing the registers instead
 void GB_InitializeRegisters(){
@@ -387,56 +419,71 @@ void GB_InitializeRegisters(){
 }
 
 int halted = 0;
-extern int pauseAutomatic;
 void runCPUTicks(int tcycles){
-    int cyclesRan;
-    pauseAutomatic = 1;
+    int cyclesRan = 0;
     while(tcycles > cyclesRan){
         cyclesRan += GB_runInstruction();
     }
-    printf("%i\n", cyclesRan);
-    pauseAutomatic = 0;
 }
 
-int timer_temp = 1;
-int GB_runInstruction(){
-    regs.f &= 0xF0; //latter nibble is always empty
+int timerCounter = 0;
+int displayCounter = 0;
+int divCounter = 0;
+int lcdcEqual = 0;
+void GB_mainLoop(){
+    int cycles = GB_runInstruction();
 
-    //IIRC it takes 456 cycles to draw a frame
-    if(c >= 256*pcycles){
-        DisplayCycle();
-        pcycles++;
-    }
-	
-    handleInterrupts();
-
-    //this register needs to be updated a bunch
-    if(c >= 256*dcycles){
-        memory[DIV] += 1;
-        dcycles++;
-    }
-
-    if(memory[LYC] == memory[LCDC_Y]){
-        if((memory[STAT] & 0x40u)){
-            if(ime)
-                memory[IF] |= 0x2u;
-
-            memory[STAT] |= 0x4u;
+    displayCounter+=cycles;
+    if(displayCounter>=456){
+        displayCounter-=456;
+        if(memory[LYC] == memory[LCDC_Y]){
+            if((memory[STAT] & 0x40u)){
+                if(ime)
+                    memory[IF] |= 0x2u;
+                memory[STAT] |= 0x4u;
+            }
+        }else{
+            memory[STAT] &= ~0x04;
         }
+        DisplayCycle();
+    }
+    
+    divCounter+=cycles;
+    if(divCounter>=256){
+        divCounter-=256;
+        memory[DIV] += 1;
     }
 
-    if(c >= 64*4*timer_temp){
+    int TACCycles = 0;
+    switch(memory[TAC] & 0x3u){
+        case 0x0:
+            TACCycles = 256*4; break;
+        case 0x1:
+            TACCycles = 4*4; break;
+        case 0x2:
+            TACCycles = 16*4; break;
+        case 0x3:
+            TACCycles = 64*4; break;
+    }
+
+    timerCounter+=cycles;
+    if(timerCounter >= TACCycles){
+        timerCounter-=TACCycles;
         if((memory[TAC] >> 2u) & 0x1){
             memory[TIMA]++;
             if(!memory[TIMA])
                 memory[IF] |= 0x4u;
         }
-        timer_temp++;    
     }
+}
 
-    if(halted){
-        c+=4*4;
-    }
+//one big beautiful function
+int GB_runInstruction(){
+    
+    handleInterrupts();
+
+    if(halted)
+        return 16;
 
     opcode = (memory[pc] << 8u) | memory[pc+1];
     opcode3 = (memory[pc] << 16u) | memory[pc+1] << 8u | memory[pc+2];
@@ -445,20 +492,21 @@ int GB_runInstruction(){
     uint16_t DE = (regs.d << 8u) | regs.e;
     uint16_t BC = (regs.b << 8u) | regs.c;
     uint16_t HL = (regs.h << 8u) | regs.l;
+    regs.f &= 0xF0; //latter nibble is always empty
 
     uint8_t n = (opcode & 0x00FFu);
     uint16_t nn = (opcode3 & 0x00FFFFu);
     uint16_t LSnn = ((opcode3 & 0x0000FFu) << 8u) | ((opcode3 & 0x00FF00u) >> 8u);
 
-    if(breakreached == 1){
+    //if(breakreached == 1){
 		//printf("INST: 0x%x\nPC: 0x%x SP: 0x%x\n", (opcode & 0xFF00u) >> 8u, pc, sp);
 		//printf("Flags: Z:%u N:%u H:%u C:%u\n", GB_GetFlag(ZERO), GB_GetFlag(BORROW), GB_GetFlag(HALFCARRY), GB_GetFlag(CARRY), regs.a);
 		//printf("Registers: A:%u B:%u C:%u D:%u E:%u F:%u H:%u L:%u\n", 
 		//        regs.a, regs.b, regs.c, regs.d, regs.e, regs.f, regs.h, regs.l);
 		//printf("Combined Registers: AF:%u BC:%u DE:0x%x HL:0x%x\n", AF, BC, DE, HL);
 		//printf("Misc: LCDC:0x%x LY:0x%x IE:0x%x IME:%i FF07(TAC):0x%x\n\n", memory[0xFF40u], memory[0xFF44u], memory[0xFFFFu], ime, memory[0xFF07u]);
-	    printf("A:%02x F:%02x B:%02x C:%02x D:%02x E:%02x H:%02x L:%02x SP:%04x PC:%04x PCMEM:%02x,%02x,%02x,%02x\n",regs.a, regs.f,regs.b,regs.c,regs.d,regs.e,regs.h,regs.l,sp,pc,memory[pc], memory[pc+1], memory[pc+2], memory[pc+3]);
-    }
+	//    printf("A:%02x F:%02x B:%02x C:%02x D:%02x E:%02x H:%02x L:%02x SP:%04x PC:%04x PCMEM:%02x,%02x,%02x,%02x\n",regs.a, regs.f,regs.b,regs.c,regs.d,regs.e,regs.h,regs.l,sp,pc,memory[pc], memory[pc+1], memory[pc+2], memory[pc+3]);
+    //}
 
 	//todo
 	//try to be more smart instead of using so many switch statements
@@ -1058,13 +1106,14 @@ int GB_runInstruction(){
 	    case 0x29:
 	        ADD_HL_n(&regs.h, &regs.l); break;
 	    //TO-CHECK
-	    case 0x39:
+	    case 0x39:{
 			uint8_t sp_high = (sp & 0xFF00u) >> 8u;
 			uint8_t sp_low = sp & 0x00FFu;
 			ADD_HL_n(&sp_high, &sp_low);
 	        break;
+        }
 
-    	case 0xE8:
+    	case 0xE8:{
 			GB_CheckHalfCarry(sp & 0x00FFu, n);
 			uint16_t result = (sp & 0x00FFu) + n;
 			sp = sp + (int8_t)(opcode & 0x00FFu);
@@ -1074,38 +1123,23 @@ int GB_runInstruction(){
 			GB_SetFlag(CARRY, result > 0xFFu ? 1 : 0);
 			pc+=2; c+=16;
           	break;
+        }
 	    
 	    //JP cc nn
 	    case 0xC2:
-			if(GB_GetFlag(ZERO) == 0){
-				pc = LSnn;
-			}else{
-				pc+=3;
-			}
+            GB_GetFlag(ZERO) ? (pc+=3) : (pc=LSnn);
 			c+=12;
 	        break;
 	    case 0xCA:
-			if(GB_GetFlag(ZERO) == 1){
-				pc = LSnn;
-			}else{
-				pc+=3;
-			}
+            GB_GetFlag(ZERO) ? (pc=LSnn) : (pc+=3);
 			c+=12;
 	        break;
 	    case 0xD2:
-			if(GB_GetFlag(CARRY) == 0){
-				pc = LSnn;
-			}else{
-				pc+=3;
-			}
+            GB_GetFlag(CARRY) ? (pc+=3) : (pc=LSnn);
 			c+=12;
 	        break;
 	    case 0xDA:
-			if(GB_GetFlag(CARRY) == 1){
-				pc = LSnn;
-			}else{
-				pc+=3;
-			}
+            GB_GetFlag(CARRY) ? (pc=LSnn) : (pc+=3);
 			c+=12;
 	        break;
 
@@ -1127,7 +1161,7 @@ int GB_runInstruction(){
 	    case 0xE9:
 			pc = HL;
 			c+=4;
-        break;
+            break;
 
 		//JR n
 		case 0x18:
@@ -1137,13 +1171,7 @@ int GB_runInstruction(){
 
       	//JR NZ
 		case 0x20:
-			if(GB_GetFlag(ZERO) == 0){
-				//+2 since we're accounting for the JR NZ bytes
-				//..I think
-				pc += (int8_t)(opcode & 0x00FFu)+2;
-			}else{
-				pc+=2;
-			}
+            GB_GetFlag(ZERO) ? (pc+=2) : (pc += (int8_t)(opcode & 0x00FFu)+2);
 			c+=8;
 			break;
 
@@ -1182,7 +1210,8 @@ int GB_runInstruction(){
 	        regs.a = ~regs.a;
 	        GB_SetFlag(BORROW, 1);
 	        GB_SetFlag(HALFCARRY, 1);
-	        c+=4; pc+=1; break;
+	        c+=4; pc+=1; 
+            break;
 
 		//JP nn
 		case 0xC3:
@@ -1191,33 +1220,35 @@ int GB_runInstruction(){
 			break;
 	
 	    //RLA
-	    case 0x17:
+	    case 0x17:{
 	        uint8_t oldBit7 = (regs.a & 0x80u) >> 7u;
+	        regs.a = (regs.a << 1u) | (GB_GetFlag(CARRY) ? 1 : 0);
+
+	        GB_SetFlag(ZERO, 0);
+	        GB_SetFlag(CARRY, oldBit7);
 	        GB_SetFlag(HALFCARRY, 0);
 	        GB_SetFlag(BORROW, 0);
 
-	        regs.a = (regs.a << 1u) | GB_GetFlag(CARRY);
-
-	        GB_SetFlag(ZERO, regs.a ? 0 : 1);
-	        GB_SetFlag(CARRY, oldBit7);
-
-	        pc+=1; c+=4; break;
+	        pc+=1; c+=4; 
+            break;
+        }
 
       	//RLCA
-	    case 0x07:
-	        uint8_t oldBit72 = (regs.a & 0x80u) >> 7u;
-	        GB_SetFlag(HALFCARRY, 0);
+	    case 0x07:{
+	        uint8_t oldBit7 = (regs.a & 0x80u) >> 7u;
+	        regs.a = (regs.a << 1u) | oldBit7;
+
+	        GB_SetFlag(ZERO, 0);
+	        GB_SetFlag(CARRY, oldBit7);
+            GB_SetFlag(HALFCARRY, 0);
 	        GB_SetFlag(BORROW, 0);
 
-	        regs.a = (regs.a << 1u) | oldBit72;
-
-	        GB_SetFlag(ZERO, regs.a ? 0 : 1);
-	        GB_SetFlag(CARRY, oldBit72);
-
-	        pc+=1; c+=4; break;
+	        pc+=1; c+=4; 
+            break;
+        }
 
 	    //RRA
-	    case 0x1F:
+	    case 0x1F:{
 	        uint8_t oldBit0 = (regs.a & 0x1u);
 	        regs.a = (GB_GetFlag(CARRY) ? 0x80 : 0) | (regs.a >> 1u);
 
@@ -1226,7 +1257,9 @@ int GB_runInstruction(){
 	        GB_SetFlag(HALFCARRY, 0);
 	        GB_SetFlag(CARRY, oldBit0);
 
-	        pc+=1; c+=8; break;
+	        pc+=1; c+=8;
+            break;
+        }
 
 
 	    //RETI
@@ -1256,35 +1289,58 @@ int GB_runInstruction(){
 			pc+=1; c+=4;
 			break;
 
-	    //TO-CHECK
 	    //DAA
 	    case 0x27:
-	        if (!GB_GetFlag(CARRY)) {  
-                if (GB_GetFlag(CARRY) || regs.a > 0x99) { regs.a += 0x60; GB_SetFlag(CARRY, 1); }
-                if (GB_GetFlag(HALFCARRY) || (regs.a & 0x0f) > 0x09) { regs.a += 0x6; }
+	        if (!GB_GetFlag(BORROW)) {  
+                if (GB_GetFlag(CARRY) || regs.a > 0x99) {
+                    regs.a += 0x60; GB_SetFlag(CARRY, 1); 
+                }
+                if (GB_GetFlag(HALFCARRY) || (regs.a & 0x0f) > 0x09) { 
+                    regs.a += 0x6; 
+                }
 	        } else {  	     
-                if (GB_GetFlag(CARRY)) { regs.a -= 0x60; }
-	            if (GB_GetFlag(HALFCARRY)) { regs.a -= 0x6; }
+                if (GB_GetFlag(CARRY)) { 
+                    regs.a -= 0x60; 
+                }
+	            if (GB_GetFlag(HALFCARRY)) { 
+                    regs.a -= 0x6; 
+                }
 	        }
-	        GB_SetFlag(ZERO, regs.a ? 1 : 0); // the usual z flag
-	        GB_SetFlag(HALFCARRY, 0); // h flag is always cleared
-	        pc+=1;
-	        c+=8;
+	        GB_SetFlag(ZERO, regs.a ? 0 : 1);
+	        GB_SetFlag(HALFCARRY, 0);
+	        pc+=1; c+=8;
 	        break;
 
 		case 0x10:
+            pc+=2;
 			break;
+
+        //RRCA
+        case 0x0F:{
+	        uint8_t oldBit0 = (regs.a & 0x1u);
+	        GB_SetFlag(CARRY, oldBit0);
+            regs.a = (regs.a >> 1u) | (oldBit0 << 7u);
+
+	        GB_SetFlag(ZERO, 0);
+	        GB_SetFlag(BORROW, 0);
+	        GB_SetFlag(HALFCARRY, 0);
+
+	        pc+=1; c+=8; 
+            break;
+        }
 
 	    case 0xCB:
             handleCB(opcode);
             break;
         
         default:
-            printf("UNIMPLEMENTED INSTRUCTION!!!!!\n");
+            printf("Unimplemented instruction!\n");
             printf("INST: 0x%x PC: 0x%x\n", (opcode & 0xFF00u) >> 8u, pc);
 	        getchar();
             exit(0);
     }
-
-    return c;
+    
+    int temp = c;
+    c = 0;
+    return temp;
 }

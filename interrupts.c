@@ -27,12 +27,13 @@ void handleInterrupts(){
     }
 
     if(ime){
-        if(memory[IF] & 0x1u) //VBLANK
+        if(memory[IF] & 0x1u){ //VBLANK
             jumpReset(0x0040u, INTERRUPT_VBLANK);
-        else if(memory[IF] & 0x2u) //STAT
+        }else if(memory[IF] & 0x2u){ //STAT
             jumpReset(0x0048u, INTERRUPT_STAT);
-        else if(memory[IF] & 0x4u) //TIMER
+        }else if(memory[IF] & 0x4u){ //TIMER
             jumpReset(0x0050u, INTERRUPT_TIMER_OVERFLOW);
+        }
     }
 }
 
